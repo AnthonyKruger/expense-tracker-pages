@@ -461,7 +461,7 @@
 
     <main>
       <div id="dropZone" class="drop-zone visible">
-        <span>Drop <strong>TransactionHistory.csv</strong> here, or use Load CSV.</span>
+        <span>Drop a CSV file here, or use Load CSV.</span>
         <span class="subtle">The page keeps data local in your browser.</span>
       </div>
 
@@ -583,8 +583,6 @@
   </div>
 
   <script>
-    const AUTO_CSV_NAME = "TransactionHistory.csv";
-
     const categoryRules = [
       ["Transfers", [/DIGITAL TRANSF (DT|CR)/, /TRANSFER FROM/, /DC TRACK INTERNAL ABSAPL/]],
       ["Income", [/SALARY/, /ACB CREDIT/, /DIGITAL PAYMENT CR/]],
@@ -597,7 +595,7 @@
       ["Software & Subs", [/CHATGPT/, /PROTON/, /SPOTIFY/, /YOUTUBE/, /STEAM/, /ITCH IO/, /COGNOSPHERE/, /PAYPAL/]],
       ["Fees", [/MONTHLY ACC FEE/, /TRANSACTION FEE/, /DECL POS TRAN FEE/]],
       ["Airtime", [/AIRTIME/]],
-      ["Household & Support", [/CASHSEND/, /MARTHA/, /ANTHONY/, /PAYSHAP EXT DEBIT/]]
+      ["Household & Support", [/CASHSEND/, /PAYSHAP EXT DEBIT/]]
     ];
 
     const merchantRules = [
@@ -659,26 +657,51 @@
     };
 
     els.csvInput.addEventListener("change", async event => {
-      const file = event.target.files && event.target.files[0];
+      const input = event.currentTarget;
+      const file = input.files && input.files[0];
       if (!file) return;
-      loadCsvText(await file.text(), file.name);
+      await loadCsvFile(file);
+      input.value = "";
     });
 
-    els.dropZone.addEventListener("dragover", event => {
+    ["dragenter", "dragover", "drop"].forEach(eventName => {
+      document.addEventListener(eventName, event => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+      });
+    });
+
+    document.addEventListener("dragleave", event => {
+      if (event.relatedTarget) return;
+      els.dropZone.classList.remove("dragging");
+    });
+
+    els.dropZone.addEventListener("dragenter", event => {
       event.preventDefault();
       els.dropZone.classList.add("dragging");
     });
 
-    els.dropZone.addEventListener("dragleave", () => {
+    els.dropZone.addEventListener("dragover", event => {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      els.dropZone.classList.add("dragging");
+    });
+
+    els.dropZone.addEventListener("dragleave", event => {
+      if (event.relatedTarget && els.dropZone.contains(event.relatedTarget)) return;
       els.dropZone.classList.remove("dragging");
     });
 
     els.dropZone.addEventListener("drop", async event => {
       event.preventDefault();
+      event.stopPropagation();
       els.dropZone.classList.remove("dragging");
-      const file = event.dataTransfer.files && event.dataTransfer.files[0];
-      if (!file) return;
-      loadCsvText(await file.text(), file.name);
+      const file = getDroppedFile(event.dataTransfer);
+      if (!file) {
+        els.sourceLine.textContent = "No CSV file found in the drop.";
+        return;
+      }
+      await loadCsvFile(file);
     });
 
     els.clearFilters.addEventListener("click", () => {
@@ -696,16 +719,36 @@
       el.addEventListener("change", render);
     });
 
-    tryAutoLoad();
+    async function loadCsvFile(file) {
+      loadCsvText(await readFileText(file), file.name || "CSV file");
+    }
 
-    async function tryAutoLoad() {
-      try {
-        const response = await fetch(AUTO_CSV_NAME, { cache: "no-store" });
-        if (!response.ok) return;
-        loadCsvText(await response.text(), AUTO_CSV_NAME);
-      } catch (_error) {
-        // File-opened HTML pages usually cannot fetch neighboring files.
-      }
+    function readFileText(file) {
+      if (typeof file.text === "function") return file.text();
+
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.addEventListener("load", () => resolve(String(reader.result || "")));
+        reader.addEventListener("error", () => reject(reader.error));
+        reader.readAsText(file);
+      });
+    }
+
+    function hasDraggedFiles(event) {
+      const dataTransfer = event.dataTransfer;
+      if (!dataTransfer) return false;
+      return Array.from(dataTransfer.types || []).includes("Files");
+    }
+
+    function getDroppedFile(dataTransfer) {
+      if (!dataTransfer) return null;
+
+      const files = Array.from(dataTransfer.files || []);
+      if (files.length > 0) return files[0];
+
+      const items = Array.from(dataTransfer.items || []);
+      const fileItem = items.find(item => item.kind === "file");
+      return fileItem ? fileItem.getAsFile() : null;
     }
 
     function loadCsvText(text, sourceName) {
@@ -735,7 +778,6 @@
 
       setupFilters();
       els.sourceLine.textContent = `${sourceName}: ${state.transactions.length} transactions loaded.`;
-      els.dropZone.classList.remove("visible");
       render();
     }
 
